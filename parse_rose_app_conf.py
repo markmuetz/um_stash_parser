@@ -83,20 +83,10 @@ class Domain(Node):
 
 
 class RoseAppParser(object):
-    def write(self, filename):
-        # Write to StringIO so that can perform replace on ' = '.
-        sio = StringIO()
-        sio.write('meta={}/{}\n\n'.format(self.um_module, self.um_version))
-        self.cp.write(sio)
-        sio.seek(0)
-        with open(filename, 'w') as f:
-            f.writelines([l.replace(' = ', '=') for l in sio.readlines()])
-
-
     def parse(self, filename):
-        self.cp = ConfigParser()
+        self._cp = ConfigParser()
         # Preserve case of options.
-        self.cp.optionxform = str
+        self._cp.optionxform = str
 
         # Skip first two lines (contains meta info that confuses cp).
         with open(filename) as f:
@@ -106,13 +96,13 @@ class RoseAppParser(object):
             self.um_module, self.um_version = meta_value.split('/')
 
             assert(f.readline()[0] == '\n')
-            ra = self.cp.readfp(f)
+            ra = self._cp.readfp(f)
 
         # Build up list of names for each node type from file.
-        stash_names = [s for s in self.cp.sections() if s[:14] == 'namelist:streq']
-        time_names = [s for s in self.cp.sections() if s[:13] == 'namelist:time']
-        use_names = [s for s in self.cp.sections() if s[:12] == 'namelist:use']
-        dom_names = [s for s in self.cp.sections() if s[:15] == 'namelist:domain']
+        stash_names = [s for s in self._cp.sections() if s[:14] == 'namelist:streq']
+        time_names = [s for s in self._cp.sections() if s[:13] == 'namelist:time']
+        use_names = [s for s in self._cp.sections() if s[:12] == 'namelist:use']
+        dom_names = [s for s in self._cp.sections() if s[:15] == 'namelist:domain']
 
         # Build node objects from representations in file.
         self.streq_list = self._parse_node_list(stash_names, StashReq)
@@ -125,11 +115,71 @@ class RoseAppParser(object):
         self.use_dict = self._build_dict(self.use_list, 'use_name')
         self.domain_dict = self._build_dict(self.domain_list, 'dom_name')
 
+        # There can be multiple streqs with the same section/item key.
+        self.streq_dict = OrderedDict()
+        for streq in self.streq_list:
+            if int(streq.isec) not in self.streq_dict:
+                self.streq_dict[int(streq.isec)] = OrderedDict()
+
+            if int(streq.item) in self.streq_dict[int(streq.isec)]:
+                self.streq_dict[int(streq.isec)][int(streq.item)].append(streq)
+            else:
+                self.streq_dict[int(streq.isec)][int(streq.item)] = [streq]
+
         # Hook up nodes together.
         self._build_links()
 
         # Use stash_vars to work out full names for each streq.
         self._add_full_stash_names()
+
+
+    def remove_streq(self, streq):
+        self.streq_list.remove(streq)
+        self.streq_dict[int(streq.isec)].pop(int(streq.item))
+        self._cp.remove_section(streq.id)
+
+
+    def remove_domain(self, dom_name):
+        if dom_name not in self.domain_dict:
+            raise ValueError('{} not a domain'.format(dom_name))
+        domain = self.domain_dict[dom_name]
+        for streq in domain.streqs:
+            self.remove_streq(streq)
+        self.domain_list.remove(domain)
+        self.domain_dict.pop(domain.dom_name)
+        self._cp.remove_section(domain.id)
+
+
+    def remove_time(self, tim_name):
+        if tim_name not in self.time_dict:
+            raise ValueError('{} not a time'.format(tim_name))
+        time = self.time_dict[tim_name]
+        for streq in time.streqs:
+            self.remove_streq(streq)
+        self.time_list.remove(time)
+        self.time_dict.pop(time.tim_name)
+        self._cp.remove_section(time.id)
+
+
+    def remove_use(self, use_name):
+        if use_name not in self.use_dict:
+            raise ValueError('{} not a use'.format(use_name))
+        use = self.use_dict[use_name]
+        for streq in use.streqs:
+            self.remove_streq(streq)
+        self.use_list.remove(use)
+        self.use_dict.pop(use.use_name)
+        self._cp.remove_section(use.id)
+
+
+    def write(self, filename):
+        # Write to StringIO so that can perform replace on ' = '.
+        sio = StringIO()
+        sio.write('meta={}/{}\n\n'.format(self.um_module, self.um_version))
+        self._cp.write(sio)
+        sio.seek(0)
+        with open(filename, 'w') as f:
+            f.writelines([l.replace(' = ', '=') for l in sio.readlines()])
 
 
     def _add_full_stash_names(self):
@@ -163,11 +213,11 @@ class RoseAppParser(object):
         node_list = []
         for node_name in node_names:
             node = node_class(node_name)
-            opts = self.cp.options(node_name)
+            opts = self._cp.options(node_name)
             for opt in opts:
                 disabled = True if opt[:2] == '!!' else False
                 name = opt[2:] if disabled else opt
-                value = self.cp.get(node_name, opt)
+                value = self._cp.get(node_name, opt)
                 value = value.replace("'", "")
 
                 node.set(name, value, disabled)
