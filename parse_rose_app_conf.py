@@ -1,3 +1,4 @@
+from StringIO import StringIO
 from collections import namedtuple, OrderedDict
 from ConfigParser import ConfigParser
 
@@ -82,8 +83,20 @@ class Domain(Node):
 
 
 class RoseAppParser(object):
+    def write(self, filename):
+        # Write to StringIO so that can perform replace on ' = '.
+        sio = StringIO()
+        sio.write('meta={}/{}\n\n'.format(self.um_module, self.um_version))
+        self.cp.write(sio)
+        sio.seek(0)
+        with open(filename, 'w') as f:
+            f.writelines([l.replace(' = ', '=') for l in sio.readlines()])
+
+
     def parse(self, filename):
         self.cp = ConfigParser()
+        # Preserve case of options.
+        self.cp.optionxform = str
 
         # Skip first two lines (contains meta info that confuses cp).
         with open(filename) as f:
